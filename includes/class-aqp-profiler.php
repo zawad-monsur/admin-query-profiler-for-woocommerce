@@ -709,14 +709,32 @@ class AQP_Profiler {
 			}
 		}
 
-		// Replace any existing entry for this page size, then push to the front.
-		$kept = array();
+		// When this page size has been scanned before, keep the LOWEST count
+		// seen per component rather than the latest.
+		//
+		// The first load after any cache is cleared is inflated: WooCommerce and
+		// friends rebuild their own transients, and those one-off queries look
+		// exactly like real work. Comparing an inflated cold scan against a warm
+		// one invents a per-row cost that does not exist - in testing it turned
+		// a true 1.0/row into a confident 1.5/row. Cold-cache noise only ever
+		// adds queries, so the minimum across repeated scans converges on the
+		// warm steady state. Scanning a size twice now sharpens the answer
+		// instead of just replacing it.
+		$kept    = array();
+		$merged  = $counts;
 		foreach ( $store as $entry ) {
-			if ( isset( $entry['rows'] ) && (int) $entry['rows'] !== (int) $rows ) {
-				$kept[] = $entry;
+			if ( ! isset( $entry['rows'] ) ) {
+				continue;
 			}
+			if ( (int) $entry['rows'] === (int) $rows ) {
+				foreach ( $entry['counts'] as $who => $n ) {
+					$merged[ $who ] = isset( $merged[ $who ] ) ? min( $merged[ $who ], (int) $n ) : (int) $n;
+				}
+				continue;
+			}
+			$kept[] = $entry;
 		}
-		array_unshift( $kept, array( 'rows' => (int) $rows, 'counts' => $counts ) );
+		array_unshift( $kept, array( 'rows' => (int) $rows, 'counts' => $merged ) );
 		set_transient( $key, array_slice( $kept, 0, 3 ), HOUR_IN_SECONDS );
 
 		if ( ! $prev ) {
