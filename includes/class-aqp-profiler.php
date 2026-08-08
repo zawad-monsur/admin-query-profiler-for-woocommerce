@@ -687,21 +687,43 @@ class AQP_Profiler {
 			$counts[ $who ] = (int) $d['count'];
 		}
 
-		$key  = 'aqp_prev_' . get_current_user_id() . '_' . md5( $screen );
-		$prev = get_transient( $key );
+		$key   = 'aqp_prev_' . get_current_user_id() . '_' . md5( $screen );
+		$store = get_transient( $key );
+		if ( ! is_array( $store ) ) {
+			$store = array();
+		}
 
-		set_transient(
-			$key,
-			array( 'rows' => (int) $rows, 'counts' => $counts ),
-			HOUR_IN_SECONDS
-		);
+		// Keep several recent scans at DISTINCT page sizes, most recent first,
+		// rather than just the last one. Storing only the last scan meant the
+		// verdict appeared once and then vanished on refresh: scanning 100 then
+		// 20 compared fine, but the next reload at 20 had only a 20-row scan to
+		// compare against and fell back to "scan again". A result that
+		// disappears when you reload the page is not a result.
+		$prev      = null;
+		$prev_rows = 0;
+		foreach ( $store as $entry ) {
+			if ( isset( $entry['rows'] ) && (int) $entry['rows'] !== (int) $rows ) {
+				$prev      = $entry;
+				$prev_rows = (int) $entry['rows'];
+				break;
+			}
+		}
 
-		// Only useful if the previous scan used a DIFFERENT number of rows.
-		if ( ! is_array( $prev ) || empty( $prev['rows'] ) || (int) $prev['rows'] === (int) $rows ) {
+		// Replace any existing entry for this page size, then push to the front.
+		$kept = array();
+		foreach ( $store as $entry ) {
+			if ( isset( $entry['rows'] ) && (int) $entry['rows'] !== (int) $rows ) {
+				$kept[] = $entry;
+			}
+		}
+		array_unshift( $kept, array( 'rows' => (int) $rows, 'counts' => $counts ) );
+		set_transient( $key, array_slice( $kept, 0, 3 ), HOUR_IN_SECONDS );
+
+		if ( ! $prev ) {
 			return null;
 		}
 
-		$delta_rows = (int) $rows - (int) $prev['rows'];
+		$delta_rows = (int) $rows - $prev_rows;
 		$names      = array_unique( array_merge( array_keys( $counts ), array_keys( $prev['counts'] ) ) );
 		$slopes     = array();
 
@@ -720,7 +742,7 @@ class AQP_Profiler {
 		uasort( $slopes, function ( $x, $y ) { return $y['slope'] <=> $x['slope']; } );
 
 		return array(
-			'rows_a' => (int) $prev['rows'],
+			'rows_a' => $prev_rows,
 			'rows_b' => (int) $rows,
 			'slopes' => $slopes,
 		);
