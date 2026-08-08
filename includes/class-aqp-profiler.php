@@ -635,11 +635,16 @@ class AQP_Profiler {
 			remove_query_arg( 'aqp_profile' )
 		);
 
+		// The label always says what CLICKING does, never what state the request
+		// is in. "Query scan: on" read as a status line and people looked
+		// straight past it - including, in testing, the person who wrote it.
 		$bar->add_node( array(
 			'id'    => 'aqp-scan',
-			'title' => self::$armed ? 'Query scan: on' : 'Scan this screen',
+			'title' => esc_html__( 'Scan this screen', 'admin-query-profiler-for-woocommerce' ),
 			'href'  => $url,
-			'meta'  => array( 'title' => 'Profile the database queries this screen runs' ),
+			'meta'  => array(
+				'title' => esc_attr__( 'Profile the database queries this screen runs', 'admin-query-profiler-for-woocommerce' ),
+			),
 		) );
 	}
 
@@ -745,7 +750,9 @@ class AQP_Profiler {
 
 		$border = 'bad' === $tone ? '#b32d2e' : ( 'good' === $tone ? '#00794c' : '#2271b1' );
 
-		echo '<div id="aqp-panel" style="margin:20px 0;padding:0;border:1px solid #c3c4c7;border-left:4px solid ' . esc_attr( $border ) . ';background:#fff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">';
+		// Hidden until the script below relocates it - see the note at the end of
+		// this method for why it cannot simply render where it is echoed.
+		echo '<div id="aqp-panel" style="display:none;margin:20px 20px 20px 0;padding:0;border:1px solid #c3c4c7;border-left:4px solid ' . esc_attr( $border ) . ';background:#fff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">';
 		echo '<div style="padding:12px 16px;border-bottom:1px solid #f0f0f1;">';
 		echo '<strong style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#50575e;">Query scan</strong>';
 		echo '<p style="margin:6px 0 0;font-size:14px;line-height:1.5;color:#1d2327;">' . wp_kses_post( $headline ) . '</p>';
@@ -795,6 +802,24 @@ class AQP_Profiler {
 			echo '<p style="margin:6px 0 0;font-size:12px;color:#646970;">Query timings need <code>SAVEQUERIES</code> in wp-config.php. Counts and attribution do not.</p>';
 		}
 		echo '</div></div>';
+
+		// admin_footer fires OUTSIDE #wpbody-content, so anything echoed here
+		// renders underneath the admin sidebar with its left edge clipped. There
+		// is no hook that runs after a list table but inside the content column,
+		// so move the node into place instead. Doing it in JS rather than with a
+		// hardcoded margin keeps it correct when the menu is collapsed, on
+		// mobile, and in RTL.
+		?>
+		<script>
+		( function () {
+			var panel  = document.getElementById( 'aqp-panel' );
+			var target = document.getElementById( 'wpbody-content' );
+			if ( ! panel ) { return; }
+			if ( target ) { target.appendChild( panel ); }
+			panel.style.display = '';
+		} )();
+		</script>
+		<?php
 	}
 }
 
