@@ -397,22 +397,46 @@ class AQP_Profiler {
 
 		uasort( $by_plugin, function ( $a, $b ) { return $b['count'] <=> $a['count']; } );
 
-		// How many rows were on screen - the denominator for "per row".
-		//
-		// WooCommerce's orders screen does not populate $GLOBALS['wp_list_table'],
-		// so fall back to the effective page size. With a large seeded store the
-		// list always renders a full page, which makes this an accurate divisor.
-		$rows = 0;
-		if ( isset( $GLOBALS['wp_list_table'] ) && isset( $GLOBALS['wp_list_table']->items ) ) {
-			$rows = count( $GLOBALS['wp_list_table']->items );
+		// How many rows were on screen - the denominator for every "per row"
+		// figure, and therefore the number most capable of producing a confident
+		// wrong answer. Each source below is tried in order of how much it can
+		// be trusted, and `$rows_exact` records whether we counted or inferred.
+		$rows       = 0;
+		$rows_exact = false;
+
+		// 1. What actually rendered. Ground truth when the list table exposes it.
+		if ( isset( $GLOBALS['wp_list_table'] )
+			&& is_object( $GLOBALS['wp_list_table'] )
+			&& isset( $GLOBALS['wp_list_table']->items )
+			&& is_array( $GLOBALS['wp_list_table']->items ) ) {
+			$rows       = count( $GLOBALS['wp_list_table']->items );
+			$rows_exact = $rows > 0;
 		}
-		// WooCommerce reads its page size from the per-user screen option
-		// 'edit_shop_order_per_page' - NOT from a per_page query parameter.
-		// Passing ?per_page=100 changes nothing, which makes it very easy to
-		// think you tested a bigger page when you did not.
-		if ( ! $rows ) {
+
+		// 2. THIS screen's own per-page option. Every list screen registers its
+		//    own ('edit_product_per_page', 'users_per_page', ...), so it must be
+		//    read from the current screen rather than assumed. Hardcoding the
+		//    orders one made every other screen report the orders page size.
+		if ( ! $rows && function_exists( 'get_current_screen' ) ) {
+			$screen_obj = get_current_screen();
+			if ( $screen_obj ) {
+				$option = $screen_obj->get_option( 'per_page', 'option' );
+				if ( $option ) {
+					$rows = (int) get_user_option( $option );
+				}
+				if ( ! $rows ) {
+					$rows = (int) $screen_obj->get_option( 'per_page', 'default' );
+				}
+			}
+		}
+
+		// 3. WooCommerce's HPOS orders screen reads 'edit_shop_order_per_page'
+		//    and ignores any ?per_page= parameter, so check it explicitly - but
+		//    only on that screen.
+		if ( ! $rows && isset( $_GET['page'] ) && 'wc-orders' === $_GET['page'] ) {
 			$rows = (int) get_user_option( 'edit_shop_order_per_page' );
 		}
+
 		if ( ! $rows ) {
 			$rows = 20; // WordPress default page size.
 		}
@@ -424,6 +448,7 @@ class AQP_Profiler {
 		$wall    = round( ( microtime( true ) - ( defined( 'WP_START_TIMESTAMP' ) ? WP_START_TIMESTAMP : $_SERVER['REQUEST_TIME_FLOAT'] ) ), 2 );
 
 		return array(
+			'rows_exact' => $rows_exact,
 			'screen'    => $screen,
 			'timed'     => $timed,
 			'capped'    => $capped,
@@ -797,6 +822,11 @@ class AQP_Profiler {
 				(int) $compare['rows_a'],
 				(int) $compare['rows_b']
 			);
+		}
+		if ( empty( $a['rows_exact'] ) ) {
+			// Say so. A per-row figure computed against an inferred denominator
+			// is exactly how this tool would produce a confident wrong answer.
+			echo '<p style="margin:6px 0 0;font-size:12px;color:#646970;">Row count inferred from this screen&rsquo;s page-size setting rather than counted directly, so per-row figures are approximate.</p>';
 		}
 		if ( ! $a['timed'] ) {
 			echo '<p style="margin:6px 0 0;font-size:12px;color:#646970;">Query timings need <code>SAVEQUERIES</code> in wp-config.php. Counts and attribution do not.</p>';
